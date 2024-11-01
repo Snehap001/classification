@@ -158,8 +158,8 @@ train_dataset.dataset.transform = train_transform  # Update only the training da
 
 
 # Create DataLoaders
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=500, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=500, shuffle=False)
 # Model, Optimizer, and Loss Function
 model = BirdClassifier(num_classes=10)
 
