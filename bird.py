@@ -19,7 +19,7 @@ transform = transforms.Compose([
 
 # Define transformations with data augmentation for training dataset
 train_transform = transforms.Compose([
-    transforms.Resize((1200, 1000)),
+    transforms.Resize((120, 100)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
     transforms.ToTensor(),
