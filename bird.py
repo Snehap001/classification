@@ -8,7 +8,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 import os
 from collections import Counter
-
+from PIL import Image
+from torchvision.transforms import InterpolationMode
 torch.manual_seed(0)
 
 transform = transforms.Compose([
@@ -20,7 +21,7 @@ transform = transforms.Compose([
 # Define transformations with data augmentation for training dataset
 train_transform = transforms.Compose([
     transforms.Resize((180, 150)),
-    transforms.RandomHorizontalFlip(),
+     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalization
@@ -40,13 +41,17 @@ class BirdClassifier(nn.Module):
         self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # 128 filters
         self.bn4 = nn.BatchNorm2d(128)
 
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)  # New layer with 256 filters
+        self.bn5 = nn.BatchNorm2d(256)
+
         # Pooling layer
         self.pool = nn.MaxPool2d(2, 2)  # Reduces the feature map size by half
 
         # Fully connected layers
-        self.fc1 = nn.Linear(128 * 11 * 9, 256)  # Adjusted input size (assuming input image size 224x180)
-        self.fc2 = nn.Linear(256, 128)  # Second fully connected layer
-        self.fc3 = nn.Linear(128, num_classes)  # Output layer
+        self.fc1 = nn.Linear(256 * 5 * 4, 512)  # Adjust input size as per the new conv layers
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, num_classes)  # Output layer
 
         # Dropout for regularization
         self.dropout = nn.Dropout(0.2)
@@ -57,19 +62,47 @@ class BirdClassifier(nn.Module):
         x = self.pool(F.relu(self.bn2(self.conv2(x))))
         x = self.pool(F.relu(self.bn3(self.conv3(x))))
         x = self.pool(F.relu(self.bn4(self.conv4(x))))  # New convolutional layer
+        x = self.pool(F.relu(self.bn5(self.conv5(x))))  # New convolutional layer
 
         # Flatten the tensor for fully connected layers
-        x = x.view(x.size(0), -1)  # Automatically handle batch size
+        x = x.view(x.size(0), -1)
 
         # Fully connected layers with ReLU and dropout
         x = F.relu(self.fc1(x))
         x = self.dropout(x)
         x = F.relu(self.fc2(x))
-        x = self.fc3(x)  # Output layer
+        x = self.dropout(x)  # Additional dropout
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)  # Output layer
 
         return x
+def preprocess_images(input_dir, output_dir, size=(180, 150), interpolation=InterpolationMode.BILINEAR):
+    """
+    Preprocess images with a specified interpolation method, resize them,
+    and save them to the output directory.
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    for root, _, files in os.walk(input_dir):
+        for file in files:
+            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+                # Load the image
+                img_path = os.path.join(root, file)
+                img = Image.open(img_path)
+                
+                # Resize with the specified interpolation method
+                resized_img = img.resize(size, interpolation)
+                if resized_img.mode == 'RGBA':
+                    resized_img = resized_img.convert('RGB')
+                # Save to the output directory
+                rel_path = os.path.relpath(root, input_dir)
+                save_dir = os.path.join(output_dir, rel_path)
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                resized_img.save(os.path.join(save_dir, file))
 def train_model(model, train_loader, val_loader, criterion, optimizer, device, model_pth):
-    num_epochs = 25
+    num_epochs = 50
     model.to(device)
     best_val_accuracy=0
     for epoch in range(num_epochs):
@@ -126,7 +159,15 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Loading ...")
 # Load the full dataset
-dataset = datasets.ImageFolder(root=dataPath, transform=transform)
+input_data_path =dataPath
+output_data_path = "preprocessed_dataset"
+
+# Preprocess with different interpolation methods, e.g., BICUBIC for smoother resizing
+preprocess_images(input_data_path, output_data_path, interpolation=Image.Resampling.LANCZOS)
+
+# Load the preprocessed images
+dataset = datasets.ImageFolder(root=output_data_path, transform=transform)
+# dataset = datasets.ImageFolder(root=dataPath, transform=transform)
 
 
 print("Extracting...")
