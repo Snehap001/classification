@@ -10,19 +10,21 @@ import os
 from collections import Counter
 from PIL import Image
 from torchvision.transforms import InterpolationMode
+
 torch.manual_seed(0)
 
-transform = transforms.Compose([
-    transforms.Resize((180, 150)),
+# Define transformations with data augmentation for the training dataset
+train_transform = transforms.Compose([
+    transforms.Resize((180, 150),interpolation=Image.Resampling.LANCZOS),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalization
 ])
 
-# Define transformations with data augmentation for training dataset
-train_transform = transforms.Compose([
-    transforms.Resize((180, 150)),
-     transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
+# Define transformations for the validation/test dataset
+transform = transforms.Compose([
+    transforms.Resize((180, 150),interpolation=Image.Resampling.LANCZOS),
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalization
 ])
@@ -30,7 +32,6 @@ train_transform = transforms.Compose([
 class BirdClassifier(nn.Module):
     def __init__(self, num_classes=10):
         super(BirdClassifier, self).__init__()
-
         # Convolutional layers
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1)  # 16 filters
         self.bn1 = nn.BatchNorm2d(16)
@@ -40,79 +41,42 @@ class BirdClassifier(nn.Module):
         self.bn3 = nn.BatchNorm2d(64)
         self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # 128 filters
         self.bn4 = nn.BatchNorm2d(128)
-
-        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)  # New layer with 256 filters
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)  # 256 filters
         self.bn5 = nn.BatchNorm2d(256)
-
-        # Pooling layer
-        self.pool = nn.MaxPool2d(2, 2)  # Reduces the feature map size by half
-
+        self.pool = nn.MaxPool2d(2, 2)  # Pooling layer
         # Fully connected layers
-        self.fc1 = nn.Linear(256 * 5 * 4, 512)  # Adjust input size as per the new conv layers
+        self.fc1 = nn.Linear(256 * 5 * 4, 512)  # Adjust input size as per the conv layers
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 128)
         self.fc4 = nn.Linear(128, num_classes)  # Output layer
-
-        # Dropout for regularization
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.2)  # Dropout for regularization
 
     def forward(self, x):
         # Convolutional layers with ReLU, batch normalization, and pooling
         x = self.pool(F.relu(self.bn1(self.conv1(x))))
         x = self.pool(F.relu(self.bn2(self.conv2(x))))
         x = self.pool(F.relu(self.bn3(self.conv3(x))))
-        x = self.pool(F.relu(self.bn4(self.conv4(x))))  # New convolutional layer
-        x = self.pool(F.relu(self.bn5(self.conv5(x))))  # New convolutional layer
-
-        # Flatten the tensor for fully connected layers
-        x = x.view(x.size(0), -1)
-
-        # Fully connected layers with ReLU and dropout
+        x = self.pool(F.relu(self.bn4(self.conv4(x))))
+        x = self.pool(F.relu(self.bn5(self.conv5(x))))
+        x = x.view(x.size(0), -1)  # Flatten for fully connected layers
         x = F.relu(self.fc1(x))
         x = self.dropout(x)
         x = F.relu(self.fc2(x))
-        x = self.dropout(x)  # Additional dropout
+        x = self.dropout(x)
         x = F.relu(self.fc3(x))
         x = self.fc4(x)  # Output layer
-
         return x
-def preprocess_images(input_dir, output_dir, size=(180, 150), interpolation=InterpolationMode.BILINEAR):
-    """
-    Preprocess images with a specified interpolation method, resize them,
-    and save them to the output directory.
-    """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
 
-    for root, _, files in os.walk(input_dir):
-        for file in files:
-            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-                # Load the image
-                img_path = os.path.join(root, file)
-                img = Image.open(img_path)
-                
-                # Resize with the specified interpolation method
-                resized_img = img.resize(size, interpolation)
-                if resized_img.mode == 'RGBA':
-                    resized_img = resized_img.convert('RGB')
-                # Save to the output directory
-                rel_path = os.path.relpath(root, input_dir)
-                save_dir = os.path.join(output_dir, rel_path)
-                if not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
-                resized_img.save(os.path.join(save_dir, file))
 def train_model(model, train_loader, val_loader, criterion, optimizer, device, model_pth):
     num_epochs = 50
     model.to(device)
-    best_val_accuracy=0
+    best_val_accuracy = 0
     for epoch in range(num_epochs):
         print(f"Starting with epoch {epoch+1}")
-        # Training Phase
         model.train()
         running_loss = 0.0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -120,7 +84,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
             optimizer.step()
             running_loss += loss.item()
         
-        # Validation Phase
         model.eval()
         correct = 0
         total = 0
@@ -136,10 +99,10 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {running_loss/len(train_loader):.4f}, Validation Accuracy: {val_accuracy:.2f}%")
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
-            # Save the best model weights
             torch.save(model.state_dict(), model_pth)
             print("Validation accuracy improved, model saved.")
     print("Training complete.")
+
 
       
 if __name__ == "__main__": 
@@ -159,15 +122,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("Loading ...")
 # Load the full dataset
-input_data_path =dataPath
-output_data_path = "preprocessed_dataset"
 
 # Preprocess with different interpolation methods, e.g., BICUBIC for smoother resizing
-preprocess_images(input_data_path, output_data_path, interpolation=Image.Resampling.LANCZOS)
 
-# Load the preprocessed images
-dataset = datasets.ImageFolder(root=output_data_path, transform=transform)
-# dataset = datasets.ImageFolder(root=dataPath, transform=transform)
+dataset = datasets.ImageFolder(root=dataPath, transform=transform)
 
 
 print("Extracting...")
@@ -204,12 +162,22 @@ train_dataset.dataset.transform = train_transform  # Update only the training da
 
 
 # Create DataLoaders
-train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=1000, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True,num_workers=4)
+val_loader = DataLoader(val_dataset, batch_size=1000, shuffle=False,num_workers=4)
 # Model, Optimizer, and Loss Function
 model = BirdClassifier(num_classes=10)
 
-criterion = nn.CrossEntropyLoss()
+class_counts = Counter([label for _, label in train_dataset])  # `train_dataset` from your DataLoader
+
+# Calculate weights as the inverse of the class frequency
+total_samples = sum(class_counts.values())
+class_weights = {class_idx: total_samples / count for class_idx, count in class_counts.items()}
+
+# Create a tensor of class weights
+weight_tensor = torch.tensor([class_weights[i] for i in range(len(class_counts))], dtype=torch.float).to(device)
+
+# Pass the weights to CrossEntropyLoss
+criterion = nn.CrossEntropyLoss(weight=weight_tensor)
 
 # Optimizer
 optimizer = optim.Adam(model.parameters(), lr=0.001)
