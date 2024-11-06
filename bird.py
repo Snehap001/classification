@@ -10,7 +10,7 @@ import os
 from collections import Counter
 from PIL import Image
 from torchvision.transforms import InterpolationMode
-
+import csv
 torch.manual_seed(0)
 
 # Define transformations with data augmentation for the training dataset
@@ -28,7 +28,20 @@ transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalization
 ])
-
+def write_to_csv(csv_file,epoch,val,train,accuracy):
+    with open(csv_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        
+        # Write header only if file is empty
+        file.seek(0, 2)  # Move the cursor to the end of the file
+        if file.tell() == 0:
+            if accuracy:  # Check if file is empty
+                writer.writerow(['Epoch', 'Validation Accuracy','Training Accuracy'])
+            else:
+                writer.writerow(['Epoch', 'Validation Loss','Training Loss'])
+        
+        # Write the current epoch and validation accuracy
+        writer.writerow([epoch, val,train])
 class BirdClassifier(nn.Module):
     def __init__(self, num_classes=10):
         super(BirdClassifier, self).__init__()
@@ -49,7 +62,7 @@ class BirdClassifier(nn.Module):
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 128)
         self.fc4 = nn.Linear(128, num_classes)  # Output layer
-        self.dropout = nn.Dropout(0.2)  # Dropout for regularization
+        self.dropout = nn.Dropout(0.3)  # Dropout for regularization
 
     def forward(self, x):
         # Convolutional layers with ReLU, batch normalization, and pooling
@@ -68,13 +81,20 @@ class BirdClassifier(nn.Module):
         return x
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, device, model_pth):
-    num_epochs = 50
+    with open("epoch_accuracy.csv", mode='w') as file:
+        pass
+    with open("epoch_loss.csv", mode='w') as file:
+        pass  
+    num_epochs = 60
     model.to(device)
     best_val_accuracy = 0
     for epoch in range(num_epochs):
         print(f"Starting with epoch {epoch+1}")
         model.train()
         running_loss = 0.0
+        validation_loss=0.0
+        train_total=0.0
+        train_correct=0.0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -83,6 +103,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            _, predicted = torch.max(outputs, 1)
+            train_total += labels.size(0)
+            train_correct += (predicted == labels).sum().item()
         
         model.eval()
         correct = 0
@@ -91,12 +114,20 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
             for inputs, labels in val_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
                 outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                validation_loss += loss.item()
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
         
         val_accuracy = 100 * correct / total
+        train_loss=running_loss/len(train_loader)
+        training_accuracy=100*train_correct/train_total
+        val_loss=validation_loss/len(val_loader)
+        epoch_num=int(epoch+1/num_epochs)
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {running_loss/len(train_loader):.4f}, Validation Accuracy: {val_accuracy:.2f}%")
+        write_to_csv("epoch_accuracy.csv",epoch_num,val_accuracy,training_accuracy,1)
+        write_to_csv("epoch_loss.csv",epoch_num,val_loss,train_loss,0)
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             torch.save(model.state_dict(), model_pth)
@@ -180,7 +211,9 @@ weight_tensor = torch.tensor([class_weights[i] for i in range(len(class_counts))
 criterion = nn.CrossEntropyLoss(weight=weight_tensor)
 
 # Optimizer
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.001,weight_decay=1e-5)
 
 
 train_model(model,train_loader,val_loader,criterion,optimizer,device,modelPath)
+num_params = sum(p.numel() for p in model.parameters())
+print(f"Total number of parameters: {num_params}")
