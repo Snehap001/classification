@@ -28,20 +28,6 @@ transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalization
 ])
-def write_to_csv(csv_file,epoch,val,train,accuracy):
-    with open(csv_file, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        
-        # Write header only if file is empty
-        file.seek(0, 2)  # Move the cursor to the end of the file
-        if file.tell() == 0:
-            if accuracy:  # Check if file is empty
-                writer.writerow(['Epoch', 'Validation Accuracy','Training Accuracy'])
-            else:
-                writer.writerow(['Epoch', 'Validation Loss','Training Loss'])
-        
-        # Write the current epoch and validation accuracy
-        writer.writerow([epoch, val,train])
 class BirdClassifier(nn.Module):
     def __init__(self, num_classes=10):
         super(BirdClassifier, self).__init__()
@@ -81,10 +67,6 @@ class BirdClassifier(nn.Module):
         return x
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, device, model_pth):
-    with open("epoch_accuracy.csv", mode='w') as file:
-        pass
-    with open("epoch_loss.csv", mode='w') as file:
-        pass  
     num_epochs = 60
     model.to(device)
     best_val_accuracy = 0
@@ -121,13 +103,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
                 correct += (predicted == labels).sum().item()
         
         val_accuracy = 100 * correct / total
-        train_loss=running_loss/len(train_loader)
-        training_accuracy=100*train_correct/train_total
-        val_loss=validation_loss/len(val_loader)
-        epoch_num=int(epoch+1/num_epochs)
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {running_loss/len(train_loader):.4f}, Validation Accuracy: {val_accuracy:.2f}%")
-        write_to_csv("epoch_accuracy.csv",epoch_num,val_accuracy,training_accuracy,1)
-        write_to_csv("epoch_loss.csv",epoch_num,val_loss,train_loss,0)
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             torch.save(model.state_dict(), model_pth)
@@ -135,85 +111,106 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, m
     print("Training complete.")
 
 
+def test_model(model, test_loader, device, output_csv='bird.csv'):
+    model.eval()  
+    results = []
+    with torch.no_grad():  
+        for images, _ in test_loader:
+            images = images.to(device)
+            
+            # Forward pass
+            outputs = model(images)
+            # Get predictions by taking the class with the highest score
+            _, predicted = torch.max(outputs, 1)
+            results.extend(predicted.cpu().numpy())
+
+    # Write only predicted labels to a CSV file
+    with open(output_csv, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Predicted_Label'])
+        for label in results:
+            writer.writerow([label])
+
       
 if __name__ == "__main__": 
     dataPath = sys.argv[1]
     trainStatus = sys.argv[2]
     modelPath = sys.argv[3] if len(sys.argv) > 3 else "default/model/path"
-if trainStatus == "train":
-    print("training")
-else:
-    print("infer")
-print(f"Training: {trainStatus}")
-print(f"path to dataset: {dataPath}")
-print(f"path to model: {modelPath}")
+    if trainStatus == "train":
+        print("training")
+        # Check if CUDA (GPU support) is available, otherwise use CPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print("Loading ...")
+        # Load the full dataset
+        # Preprocess with different interpolation methods, e.g., BICUBIC for smoother resizing
 
-# Check if CUDA (GPU support) is available, otherwise use CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-print("Loading ...")
-# Load the full dataset
-
-# Preprocess with different interpolation methods, e.g., BICUBIC for smoother resizing
-
-dataset = datasets.ImageFolder(root=dataPath, transform=transform)
+        dataset = datasets.ImageFolder(root=dataPath, transform=transform)
 
 
-print("Extracting...")
+        print("Extracting...")
 
-# List to store the labels
-labels = []
+        # List to store the labels
+        labels = []
 
-# Iterate through each subdirectory (class)
-for class_index, class_name in enumerate(sorted(os.listdir(dataPath))):  # Sorting to maintain consistent order
-    class_path = os.path.join(dataPath, class_name)
-    
-    if os.path.isdir(class_path):  # Check if it's a directory
-        # Count the number of image files in the class directory
-        num_images = len([f for f in os.listdir(class_path) 
-                          if os.path.isfile(os.path.join(class_path, f)) 
-                          and f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))])  # Filter by image extensions
-        
-        # Append the class index `num_images` times to the labels list
-        labels.extend([class_index] * num_images)
-
-
-print("Splitting ...")
-
-# Initialize StratifiedShuffleSplit
-splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
-train_idx, val_idx = next(splitter.split(range(len(labels)), labels))
-
-# Create training and validation subsets
-train_dataset = Subset(dataset, train_idx)
-val_dataset = Subset(dataset, val_idx)
-
-# Apply the transformations to the training dataset
-train_dataset.dataset.transform = train_transform  # Update only the training dataset with augmentations
+        # Iterate through each subdirectory (class)
+        for class_index, class_name in enumerate(sorted(os.listdir(dataPath))):  # Sorting to maintain consistent order
+            class_path = os.path.join(dataPath, class_name)
+            
+            if os.path.isdir(class_path):  # Check if it's a directory
+                # Count the number of image files in the class directory
+                num_images = len([f for f in os.listdir(class_path) 
+                                if os.path.isfile(os.path.join(class_path, f)) 
+                                and f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))])  # Filter by image extensions
+                
+                # Append the class index `num_images` times to the labels list
+                labels.extend([class_index] * num_images)
 
 
-# Create DataLoaders
-train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True,num_workers=4)
-val_loader = DataLoader(val_dataset, batch_size=1000, shuffle=False,num_workers=4)
-# Model, Optimizer, and Loss Function
-model = BirdClassifier(num_classes=10)
+        print("Splitting ...")
 
-class_counts = Counter([label for _, label in train_dataset])  # `train_dataset` from your DataLoader
+        # Initialize StratifiedShuffleSplit
+        splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        train_idx, val_idx = next(splitter.split(range(len(labels)), labels))
 
-# Calculate weights as the inverse of the class frequency
-total_samples = sum(class_counts.values())
-class_weights = {class_idx: total_samples / count for class_idx, count in class_counts.items()}
+        # Create training and validation subsets
+        train_dataset = Subset(dataset, train_idx)
+        val_dataset = Subset(dataset, val_idx)
 
-# Create a tensor of class weights
-weight_tensor = torch.tensor([class_weights[i] for i in range(len(class_counts))], dtype=torch.float).to(device)
-
-# Pass the weights to CrossEntropyLoss
-criterion = nn.CrossEntropyLoss(weight=weight_tensor)
-
-# Optimizer
-optimizer = optim.Adam(model.parameters(), lr=0.001,weight_decay=1e-5)
+        # Apply the transformations to the training dataset
+        train_dataset.dataset.transform = train_transform  # Update only the training dataset with augmentations
 
 
-train_model(model,train_loader,val_loader,criterion,optimizer,device,modelPath)
-num_params = sum(p.numel() for p in model.parameters())
-print(f"Total number of parameters: {num_params}")
+        # Create DataLoaders
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True,num_workers=4)
+        val_loader = DataLoader(val_dataset, batch_size=1000, shuffle=False,num_workers=4)
+        # Model, Optimizer, and Loss Function
+        model = BirdClassifier(num_classes=10)
+
+        class_counts = Counter([label for _, label in train_dataset])  # `train_dataset` from your DataLoader
+
+        # Calculate weights as the inverse of the class frequency
+        total_samples = sum(class_counts.values())
+        class_weights = {class_idx: total_samples / count for class_idx, count in class_counts.items()}
+
+        # Create a tensor of class weights
+        weight_tensor = torch.tensor([class_weights[i] for i in range(len(class_counts))], dtype=torch.float).to(device)
+
+        # Pass the weights to CrossEntropyLoss
+        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+
+        # Optimizer
+        optimizer = optim.Adam(model.parameters(), lr=0.001,weight_decay=1e-5)
+
+        train_model(model,train_loader,val_loader,criterion,optimizer,device,modelPath)
+
+
+    else:
+        print("infer")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = BirdClassifier(num_classes=10) 
+        model.to(device)
+        model.load_state_dict(torch.load(modelPath, weights_only=True))
+        model.eval()    
+        test_dataset=datasets.ImageFolder(root=dataPath, transform=transform)
+        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+        test_model(model,test_loader,device)
